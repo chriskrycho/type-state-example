@@ -55,7 +55,7 @@ fn main() {
                 state_machine = if rand::random() {
                     StateMachine::First(a.add(rand::random()))
                 } else {
-                    StateMachine::Second(a.into_b(12))
+                    StateMachine::Second(a.into_second(12))
                 };
             }
 
@@ -63,7 +63,13 @@ fn main() {
             // move to `Third(C)`, but we again cannot go backwards.
             StateMachine::Second(b) => {
                 state_machine = if rand::random() {
-                    StateMachine::Third(b.into_c(4.0))
+                    match b.into_third(4) {
+                        Ok(third) => StateMachine::Third(third),
+                        Err((original, reason)) => {
+                            eprintln!("{reason}");
+                            StateMachine::Second(original)
+                        }
+                    }
                 } else {
                     StateMachine::Second(b.add(2))
                 };
@@ -107,56 +113,83 @@ mod state {
     /// There are more complicated versions of this you can implement, but all
     /// of them are compatible with this version.
     #[derive(Debug)]
-    pub(crate) enum StateMachine {
-        First(A),
-        Second(B),
-        Third(C),
+    pub enum StateMachine {
+        First(First),
+        Second(Second),
+        Third(Third),
     }
 
     impl StateMachine {
-        pub(crate) fn new(initial: u32) -> Self {
-            StateMachine::First(A(initial))
+        pub fn new(initial: u32) -> Self {
+            StateMachine::First(First(initial))
         }
     }
 
-    /// Next, we
+    // Next, we define a set of structs with distinct states. The states here
+    // are not interesting in and of themselves: they are just numbers, so that
+    // the state changes between them can be more or less trivial. The point is
+    // that their internal state is *private* to them, so nothing outside the
+    // `state` module has access to them. We have to be disciplined *within*
+    // this module (though we could also enforce that safety by putting them in
+    // their own modules if that was important for the structure of our code).
+
+    ///
+    #[derive(Debug)]
+    pub struct First(u32);
 
     #[derive(Debug)]
-    pub(crate) struct A(u32);
+    pub struct Second(i32);
 
     #[derive(Debug)]
-    pub(crate) struct B(i32);
+    pub struct Third(f64);
 
-    #[derive(Debug)]
-    pub(crate) struct C(f32);
-
-    impl A {
-        pub(crate) fn into_b(self, addend: i32) -> B {
-            B(self.0 as i32 + addend)
+    impl First {
+        pub fn into_second(self, addend: i32) -> Second {
+            Second(self.0 as i32 + addend)
         }
 
-        pub(crate) fn add(&self, addend: u32) -> Self {
-            A(self.0 + addend)
+        pub fn add(&self, addend: u32) -> Self {
+            First(self.0 + addend)
         }
     }
 
-    impl B {
-        pub(crate) fn into_c(self, factor: f32) -> C {
-            C(self.0 as f32 * factor)
+    impl Second {
+        /// Get a `Third` from a `Second`.
+        ///
+        /// Similarly to `First::into_second`, we can include additional state
+        /// required to accomplish the transformation. This is also a fallible
+        /// operation (though we do not usually think about it!) since the
+        /// multiplication could overflow. This demonstrates another handy
+        /// result of splitting out the pattern matching from the internal state
+        /// transitions: it allows the fallibility to be handled distinctly.
+        ///
+        /// One key bit here: since we are taking ownership of `self` here (as
+        /// is typical of the type state pattern), it is important that we also
+        /// return it when in a failure case, so that the state machine remains
+        /// viable -- but this is specific to the state machine. It could also
+        /// be the case that some attempts to transition states are
+        /// unrecoverable failures, in which case you would *not* return `Self`
+        /// and the type itself would encode that unrecoverability.
+        pub fn into_third(self, factor: i32) -> Result<Third, (Self, String)> {
+            self.0
+                .checked_mul(factor)
+                .ok_or_else(|| (self, "Overflow! 😱".into()))
+                .map(f64::from)
+                .map(Third)
         }
 
-        pub(crate) fn add(&self, addend: i32) -> Self {
-            B(self.0 + addend)
+        pub fn add(&self, addend: i32) -> Self {
+            Second(self.0 + addend)
         }
     }
 
-    impl C {
-        pub(crate) fn add(&self, addend: f32) -> Self {
-            C(self.0 + addend)
+    impl Third {
+        pub fn add(&self, addend: f64) -> Self {
+            Third(self.0 + addend)
         }
 
-        pub(crate) fn into_b(self, divisor: i32) -> B {
-            B(self.0 as i32 / divisor)
+        pub fn into_b(self, divisor: i32) -> Second {
+            Second(self.0 as i32 / divisor)
         }
     }
 }
